@@ -3,14 +3,16 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.models import DesignSpec, HealthResponse, ParseRequest, ProjectPlan, ProjectRevisionRequest
+from app.models import CadGenerationResponse, ChatRequest, ChatResponse, DesignSpec, HealthResponse, ParseRequest, ProjectPlan, ProjectRevisionRequest
+from app.services.cad import generate_primitive
+from app.services.chat import handle_message
 from app.services.orchestrator import create_plan
-from app.services.parser import PromptParseError, parse_box_prompt
+from app.services.parser import PromptParseError, parse_design_prompt
 from app.services.project_store import history, latest, save
 
 app = FastAPI(title="AI-CAD Engineer API", version="0.1.0")
 
-origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -28,8 +30,24 @@ def health() -> HealthResponse:
 @app.post("/api/v1/designs/parse", response_model=DesignSpec)
 def parse_design(request: ParseRequest) -> DesignSpec:
     try:
-        return parse_box_prompt(request.prompt)
+        return parse_design_prompt(request.prompt)
     except PromptParseError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/chat", response_model=ChatResponse)
+def chat(request: ChatRequest) -> ChatResponse:
+    try:
+        return handle_message(request.message, request.project_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/cad/generate", response_model=CadGenerationResponse)
+def generate_cad(design: DesignSpec) -> CadGenerationResponse:
+    try:
+        return generate_primitive(design)
+    except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
