@@ -1,4 +1,4 @@
-﻿# AI-CAD Engineer
+# AI-CAD Engineer
 
 An early, production-oriented foundation for a **prompt-to-CAD engineering platform**.
 
@@ -161,6 +161,47 @@ Invoke-RestMethod -Method Post http://localhost:8000/api/v1/designs/parse `
 Invoke-RestMethod -Method Post http://localhost:8000/api/cad/generate `
   -ContentType 'application/json' `
   -Body '<DesignSpec JSON>'
+```
+
+### Canonical House CAD Engine (Phase 5.4-H)
+
+Backed by genuine **OpenCASCADE / build123d** B-Rep solid modeling. Zero fabricated values: all volumes, surface areas, masses, centers of mass, and moments of inertia are evaluated directly by the CAD kernel from manifold solids.
+
+```powershell
+# Generate full canonical house CAD model (solids, topology, physical properties)
+Invoke-RestMethod -Method Post http://localhost:8000/api/house/cad/generate `
+  -ContentType 'application/json' `
+  -Body '{"floors": 2, "roof_type": "pitched"}'
+
+# Retrieve component tree hierarchy
+Invoke-RestMethod -Method Post http://localhost:8000/api/house/cad/tree `
+  -ContentType 'application/json' `
+  -Body '{"floors": 2}'
+
+# Retrieve verified physical/mechanical properties
+Invoke-RestMethod -Method Post http://localhost:8000/api/house/cad/properties `
+  -ContentType 'application/json' `
+  -Body '{"floors": 2}'
+
+# Retrieve per-face B-Rep metadata
+Invoke-RestMethod -Method Post http://localhost:8000/api/house/cad/faces `
+  -ContentType 'application/json' `
+  -Body '{"floors": 2}'
+
+# Export genuine STEP AP214 file (manifold solid B-Rep)
+Invoke-RestMethod -Method Post http://localhost:8000/api/house/cad/export/step `
+  -ContentType 'application/json' `
+  -Body '{"floors": 2}' -OutFile house.step
+
+# Export binary STL file
+Invoke-RestMethod -Method Post http://localhost:8000/api/house/cad/export/stl `
+  -ContentType 'application/json' `
+  -Body '{"floors": 2}' -OutFile house.stl
+
+# Export Wavefront OBJ file
+Invoke-RestMethod -Method Post http://localhost:8000/api/house/cad/export/obj `
+  -ContentType 'application/json' `
+  -Body '{"floors": 2}' -OutFile house.obj
 ```
 
 ### Projects

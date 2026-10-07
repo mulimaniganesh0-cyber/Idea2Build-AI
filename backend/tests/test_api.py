@@ -50,13 +50,33 @@ def test_chat_generates_a_shaft() -> None:
 
 
 def test_chat_creates_cube_and_modifies_all_edges() -> None:
-    created = client.post("/api/chat", json={"message": "create a cube of 3cm"})
+    created = client.post("/api/chat", json={"message": "make a cube of 5m"})
     assert created.status_code == 200
     design = created.json()["design_state"]
-    assert design["dimensions_mm"] == {"length": 30, "width": 30, "height": 30}
-    modified = client.post("/api/chat", json={"project_id": created.json()["project_id"], "message": "make it 5cm"})
+    assert created.json()["cad_intent"] == "CREATE_CAD"
+    assert created.json()["requires_clarification"] is False
+    assert design["dimensions_mm"] == {"length": 5000, "width": 5000, "height": 5000}
+    report = created.json()["kernel_report"]
+    assert report["source"] == "OpenCascade / build123d B-Rep"
+    assert report["valid"] is True
+    assert report["solid_count"] == 1
+    assert report["volume_mm3"] == 125_000_000_000
+    assert report["bounding_box_mm"] == {"x": 5000, "y": 5000, "z": 5000}
+    assert len(report["feature_history"]) == 1
+    modified = client.post("/api/chat", json={"project_id": created.json()["project_id"], "message": "make it 3m"})
     assert modified.status_code == 200
-    assert modified.json()["design_state"]["dimensions_mm"] == {"length": 50, "width": 50, "height": 50}
+    assert modified.json()["cad_intent"] == "MODIFY_CAD"
+    assert modified.json()["design_state"]["dimensions_mm"] == {"length": 3000, "width": 3000, "height": 3000}
+    assert modified.json()["kernel_report"]["volume_mm3"] == 27_000_000_000
+
+
+def test_box_length_only_asks_for_missing_dimensions_and_orphan_modify_clarifies() -> None:
+    box = client.post("/api/chat", json={"message": "make a box 5m long"}).json()
+    assert box["cad_intent"] == "CLARIFICATION_REQUIRED"
+    assert box["questions"] == ["What width should I use?", "What height should I use?"]
+    orphan = client.post("/api/chat", json={"message": "make it 5m long"}).json()
+    assert orphan["cad_intent"] == "CLARIFICATION_REQUIRED"
+    assert orphan["requires_clarification"] is True
 
 
 def test_create_is_not_mistaken_for_modify_when_project_exists() -> None:

@@ -8,7 +8,18 @@ export interface Dimensions {
 
 export interface DesignSpec {
   schema_version: string;
-  object_type: "box" | "shaft" | "plate" | "cylinder" | "sphere" | "cone" | "hole" | "bridge" | "house" | string;
+  object_type:
+    | "box"
+    | "shaft"
+    | "plate"
+    | "cylinder"
+    | "sphere"
+    | "cone"
+    | "hole"
+    | "bridge"
+    | "house"
+    | "mechanical_bracket"
+    | string;
   dimensions: Dimensions;
   unit: Unit;
   dimensions_mm: Dimensions;
@@ -23,6 +34,10 @@ export type ViewMode = "exterior" | "interior" | "cutaway" | "floor_plan" | "ful
 export interface GeometryComponent {
   name: string;
   type: string;
+  component_id?: string;
+  structural?: boolean;
+  classification?: string;
+  material_id?: string;
   position_m: [number, number, number];
   dimensions_m: [number, number, number];
   rotation_rad?: [number, number, number];
@@ -34,7 +49,72 @@ export interface GeometryComponent {
 export interface ParametricGeometry {
   type: string;
   unit: string;
+  model_revision?: string;
+  geometry_hash?: string;
   components: GeometryComponent[];
+}
+
+export type SelectionMode = "navigate" | "inspect_face" | "apply_load" | "apply_support";
+
+export interface CADFaceMetadata {
+  face_id: string;
+  component_id: string;
+  model_revision: string;
+  geometry_hash: string;
+  area_m2: number;
+  area_mm2: number;
+  normal: { x: number; y: number; z: number };
+  center_m: { x: number; y: number; z: number };
+  center_mm: { x: number; y: number; z: number };
+  surface_type: string;
+  structural: boolean;
+  classification?: string;
+  material_id?: string;
+  bounding_box?: Record<string, number>;
+}
+
+export interface EngineeringLoad {
+  load_id: string;
+  model_id: string;
+  project_id: string;
+  model_revision: string;
+  geometry_hash: string;
+  type: "FORCE" | "PRESSURE" | "MOMENT" | "TORQUE";
+  magnitude: number;
+  unit: string;
+  direction_x: number;
+  direction_y: number;
+  direction_z: number;
+  component_id: string;
+  face_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EngineeringSupport {
+  support_id: string;
+  model_id: string;
+  project_id: string;
+  model_revision: string;
+  geometry_hash: string;
+  type: "FIXED" | "PINNED" | "ROLLER" | "SYMMETRY";
+  component_id: string;
+  face_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EngineeringSummary {
+  ok: boolean;
+  model_id: string;
+  load_count: number;
+  support_count: number;
+  resultant_force_N: number;
+  warnings: string[];
+  loads: EngineeringLoad[];
+  supports: EngineeringSupport[];
 }
 
 export interface ModelAction {
@@ -70,6 +150,16 @@ export interface ProjectPlan {
   safety_notice: string;
 }
 
+export interface ProjectSession {
+  plan: ProjectPlan;
+  design_state: DesignSpec | null;
+  design_version: number | null;
+  geometry: ParametricGeometry | null;
+  parametric_json: Record<string, unknown> | null;
+  messages: Array<{ role: "assistant" | "user"; text: string; timestamp: string }>;
+  kernel_report?: Record<string, unknown> | null;
+  house_design_state?: Record<string, unknown> | null;
+}
 export interface ChatResponse {
   message: string;
   requires_clarification: boolean;
@@ -80,6 +170,13 @@ export interface ChatResponse {
   design_state: DesignSpec | null;
   model_action: ModelAction | null;
   geometry: ParametricGeometry | null;
+  parametric_json?: Record<string, unknown> | null;
+  knowledge_status?: string | null;
+  knowledge_sources?: Array<{ document_id?: number; chunk_id?: number; rank?: number; source: string; title?: string; page?: number | null; score?: number; content?: string }> | null;
+  knowledge_trace?: { trace_id: string; embedding_model: string; embedding_dimension: number | null; requested_top_k: number; similarity_threshold: number; duration_ms?: number } | null;
+  cad_intent?: string | null;
+  kernel_report?: Record<string, unknown> | null;
+  house_design_state?: Record<string, unknown> | null;
 }
 
 export interface ChatMessage {

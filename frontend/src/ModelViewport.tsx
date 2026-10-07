@@ -57,7 +57,7 @@ function getComponentMaterial(comp: GeometryComponent, viewMode: ViewMode = "ext
     if (viewMode === "interior" || viewMode === "floor_plan") {
       // Hide exterior walls or make nearly invisible to expose the rooms
       return new THREE.MeshPhysicalMaterial({
-        color: 0xf8fafc,
+        color: material_color ? new THREE.Color(material_color) : 0xf8fafc,
         transparent: true,
         opacity: 0.05,
         roughness: 0.1,
@@ -65,14 +65,14 @@ function getComponentMaterial(comp: GeometryComponent, viewMode: ViewMode = "ext
     }
     if (viewMode === "cutaway") {
       return new THREE.MeshPhysicalMaterial({
-        color: 0x94a3b8,
+        color: material_color ? new THREE.Color(material_color) : 0x94a3b8,
         transparent: true,
         opacity: 0.18,
         roughness: 0.2,
         metalness: 0.1,
       });
     }
-    return new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.5, metalness: 0.1 });
+    return new THREE.MeshStandardMaterial({ color: material_color ? new THREE.Color(material_color) : 0xf8fafc, roughness: 0.5, metalness: 0.1 });
   }
 
   // 5. Interior partition walls
@@ -83,7 +83,7 @@ function getComponentMaterial(comp: GeometryComponent, viewMode: ViewMode = "ext
   // 6. Windows & Glass
   if (lowerType === "window" || lowerName.includes("window")) {
     return new THREE.MeshPhysicalMaterial({
-      color: 0x38bdf8,
+      color: material_color ? new THREE.Color(material_color) : 0x38bdf8,
       transparent: true,
       opacity: viewMode === "interior" ? 0.3 : 0.65,
       roughness: 0.1,
@@ -107,7 +107,7 @@ function getComponentMaterial(comp: GeometryComponent, viewMode: ViewMode = "ext
     if (viewMode === "interior" || viewMode === "cutaway" || viewMode === "floor_plan") {
       return new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.0 });
     }
-    return new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.5, metalness: 0.3 });
+    return new THREE.MeshStandardMaterial({ color: material_color ? new THREE.Color(material_color) : 0x1e293b, roughness: 0.5, metalness: 0.3 });
   }
 
   // 10. Furniture items
@@ -115,10 +115,10 @@ function getComponentMaterial(comp: GeometryComponent, viewMode: ViewMode = "ext
     return new THREE.MeshStandardMaterial({ color: 0x1e3a8a, roughness: 0.8, metalness: 0.1 });
   }
   if (lowerType === "furniture_bed" || lowerName.includes("bed") || lowerName.includes("headboard")) {
-    return new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.6, metalness: 0.2 });
+    return new THREE.MeshStandardMaterial({ color: material_color ? new THREE.Color(material_color) : 0xb45309, roughness: 0.6, metalness: 0.2 });
   }
   if (lowerType === "furniture_table" || lowerName.includes("table") || lowerName.includes("desk")) {
-    return new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.5, metalness: 0.2 });
+    return new THREE.MeshStandardMaterial({ color: material_color ? new THREE.Color(material_color) : 0x78350f, roughness: 0.5, metalness: 0.2 });
   }
   if (lowerType === "furniture_chair" || lowerName.includes("chair")) {
     return new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.6, metalness: 0.2 });

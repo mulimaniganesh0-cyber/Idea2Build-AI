@@ -124,6 +124,13 @@ class ChatResponse(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
     active_domain: str | None = None
     geometry: "ParametricGeometry | None" = None
+    parametric_json: dict | None = None  # Canonical editable design source (STEP/STL/OBJ/GLB rebuilt from this)
+    knowledge_status: str | None = None
+    knowledge_sources: list[dict] = Field(default_factory=list)
+    knowledge_trace: dict | None = None
+    cad_intent: str | None = None
+    kernel_report: dict | None = None
+    house_design_state: dict | None = None
 
 
 class BridgeProjectState(BaseModel):
@@ -168,6 +175,42 @@ class HouseProjectState(BaseModel):
     unit: str = "ft"
     status: str = "requirements_pending"
     assumptions: list[str] = Field(default_factory=list)
+    built_up_area_sqft: float | None = None
+    bedrooms: int = 3
+    bathrooms: int = 2
+    parking: bool = False
+    kitchen_type: str = "closed"
+    balcony: bool = False
+    terrace: bool = True
+    style: str = "modern"
+    interior_style: str = "modern_minimal"
+    color_palette: str = "contemporary"
+    location: str | None = None
+    orientation: str | None = None
+    climate_profile: dict = Field(default_factory=dict)
+    house_requirements: dict = Field(default_factory=dict)
+    site_analysis: dict = Field(default_factory=dict)
+    room_allocation: list[dict] = Field(default_factory=list)
+    room_planning_report: dict = Field(default_factory=dict)
+    design_options: list[dict] = Field(default_factory=list)
+    selected_design_option_id: str | None = None
+    design_reasoning: list[dict] = Field(default_factory=list)
+    knowledge_provenance: list[dict] = Field(default_factory=list)
+    knowledge_status: str = "NOT_REQUIRED"
+    knowledge_trace: dict = Field(default_factory=dict)
+    design_revision: int = 0
+    roof_slope_deg: float = 25.0
+    roof_overhang_mm: float = 600.0
+    drainage: bool = False
+    gutters: bool = False
+    pooja_room: bool = False
+    study_room: bool = False
+    utility: bool = False
+    budget_category: str | None = None
+    pooja_room: bool = False
+    study_room: bool = False
+    utility: bool = False
+    budget_category: str | None = None
 
 
 class CadGenerationResponse(BaseModel):
@@ -183,6 +226,10 @@ class CadGenerationResponse(BaseModel):
 class GeometryComponent(BaseModel):
     name: str
     type: str
+    component_id: str | None = None
+    structural: bool = True
+    classification: str = "structural"
+    material_id: str | None = None
     position_m: tuple[float, float, float] = (0, 0, 0)
     dimensions_m: tuple[float, float, float]
     rotation_rad: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -194,6 +241,8 @@ class GeometryComponent(BaseModel):
 class ParametricGeometry(BaseModel):
     type: str
     unit: str = "m"
+    model_revision: str | None = None
+    geometry_hash: str | None = None
     components: list[GeometryComponent]
 
 

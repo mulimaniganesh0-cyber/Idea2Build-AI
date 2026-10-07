@@ -11,7 +11,7 @@ from app.models import BridgeType, CadGenerationResponse, DesignSpec, GeometryCo
 
 
 def generate_primitive(design: DesignSpec) -> CadGenerationResponse:
-    if design.object_type not in {"box", "shaft", "plate", "cylinder", "sphere", "cone", "hole", "bridge", "house"}:
+    if design.object_type not in {"box", "shaft", "plate", "cylinder", "sphere", "cone", "hole", "bridge", "house", "mechanical_bracket"}:
         raise ValueError(f"Unsupported CAD primitive: {design.object_type}")
     
     validation = ["Schema validation passed.", "Units normalized to millimetres.", "Parametric viewer geometry generated."]
@@ -39,6 +39,12 @@ def _generate_house_building_geometry(design: DesignSpec) -> tuple[ParametricGeo
     floors = max(1, int(params.get("floors", params.get("floor_count", 2))))
     floor_h = float(params.get("floor_height_m", 3.0))
     roof_type = str(params.get("roof_type", "pitched"))
+    palette = {
+        "modern_vibrant": {"wall": "#f5f0e6", "accent": "#0f766e", "roof": "#334155", "wood": "#a16207"},
+        "warm_luxury": {"wall": "#f3e8d1", "accent": "#9a3412", "roof": "#3f2d20", "wood": "#6b3f24"},
+        "contemporary": {"wall": "#f8fafc", "accent": "#64748b", "roof": "#334155", "wood": "#8b5e3c"},
+        "tropical": {"wall": "#f5f5e6", "accent": "#166534", "roof": "#9a3412", "wood": "#854d0e"},
+    }.get(str(params.get("color_palette", "contemporary")), {})
 
     components: list[GeometryComponent] = [
         GeometryComponent(
@@ -92,7 +98,7 @@ def _generate_house_building_geometry(design: DesignSpec) -> tuple[ParametricGeo
                 floor_number=i,
                 position_m=(0, base_y + (floor_h / 2) + 0.15, 0),
                 dimensions_m=(b_w, floor_h - 0.3, b_l),
-                material_color="#f8fafc",
+                material_color=palette.get("wall", "#f8fafc"),
             )
         )
 
@@ -119,7 +125,7 @@ def _generate_house_building_geometry(design: DesignSpec) -> tuple[ParametricGeo
         )
 
         # 5. Balcony for upper floors
-        if i >= 1:
+        if i >= 1 and bool(params.get("balcony", 1)):
             components.append(
                 GeometryComponent(
                     name=f"balcony_fl{i+1}",
@@ -427,30 +433,68 @@ def _generate_house_building_geometry(design: DesignSpec) -> tuple[ParametricGeo
         )
     )
 
-    # Roof slab / cap
+    # Parameterized roof cap
     roof_y = floors * floor_h + 0.3
+    roof_slope = float(params.get("roof_slope_deg", 25))
+    overhang = float(params.get("roof_overhang_mm", 300)) / 1000
     components.append(
         GeometryComponent(
             name="roof_slab",
             type="roof",
             floor_number=floors - 1,
             position_m=(0, roof_y + 0.15, 0),
-            dimensions_m=(b_w * 1.08, 0.3, b_l * 1.08),
-            material_color="#1e293b",
+            dimensions_m=(b_w + 2 * overhang, max(0.15, math.tan(math.radians(roof_slope)) * b_w / 2), b_l + 2 * overhang),
+            material_color=palette.get("roof", "#1e293b"),
         )
     )
 
-    if roof_type == "pitched":
+    if roof_type in ("pitched", "gable", "hip", "single_slope", "mixed"):
         components.append(
             GeometryComponent(
                 name="roof_ridge",
                 type="roof_pitched",
                 floor_number=floors - 1,
                 position_m=(0, roof_y + 0.7, 0),
-                dimensions_m=(b_w * 0.95, 0.8, b_l * 0.95),
-                material_color="#334155",
+                dimensions_m=(b_w * 0.95, max(0.4, math.tan(math.radians(roof_slope)) * b_w / 2), b_l * 0.95),
+                material_color=palette.get("accent", "#334155"),
             )
         )
+
+    # Replace template bed count with the explicit requirement.
+    components = [component for component in components if component.type not in ("furniture_bed", "furniture_sanitary")]
+    for bed_index in range(max(0, int(params.get("bedrooms", floors)))):
+        floor = bed_index % floors
+        components.append(GeometryComponent(
+            name=f"bedroom_{bed_index + 1}_bed", type="furniture_bed", floor_number=floor,
+            room_id=f"bedroom_{bed_index + 1}_{floor}",
+            position_m=(((-1) ** bed_index) * b_w * 0.20, floor * floor_h + 0.35, -b_l * 0.30),
+            dimensions_m=(1.80 if str(params.get("interior_style", "")).endswith("luxury") else 1.60, 0.45, 2.00), material_color=palette.get("wood", "#b45309"),
+        ))
+
+    for bath_index in range(max(0, int(params.get("bathrooms", floors)))):
+        floor = bath_index % floors
+        components.append(GeometryComponent(
+            name=f"bathroom_{bath_index + 1}_fixture", type="furniture_sanitary", floor_number=floor,
+            room_id=f"bathroom_{bath_index + 1}_{floor}",
+            position_m=(b_w * 0.32, floor * floor_h + 0.42, -b_l * 0.32),
+            dimensions_m=(0.65, 0.6, 0.75), material_color="#f8fafc",
+        ))
+
+    if bool(params.get("pooja_room", 0)):
+        components.append(GeometryComponent(name="pooja_room_cabinet", type="furniture_wardrobe", room_id="pooja_room_0", floor_number=0, position_m=(-b_w * .30, .8, -b_l * .30), dimensions_m=(.55, 1.6, .45), material_color=palette.get("wood", "#854d0e")))
+    if bool(params.get("study_room", 0)):
+        components.append(GeometryComponent(name="study_room_desk", type="furniture_table", room_id="study_room_1", floor_number=min(1, floors - 1), position_m=(b_w * .2, floor_h + .4, -b_l * .25), dimensions_m=(1.4, .75, .65), material_color=palette.get("wood", "#78350f")))
+    if bool(params.get("utility", 0)):
+        components.append(GeometryComponent(name="utility_counter", type="furniture_counter", room_id="utility_0", floor_number=0, position_m=(b_w * .30, .45, -b_l * .2), dimensions_m=(1.4, .9, .6), material_color=palette.get("accent", "#475569")))
+
+    if bool(params.get("parking", 0)):
+        components.append(GeometryComponent(name="parking_bay", type="parking", position_m=(b_w * 0.48, 0.05, b_l * 0.25), dimensions_m=(2.7, 0.1, 5.2), material_color="#475569"))
+    if bool(params.get("gutters", 0)):
+        for side in (-1, 1):
+            components.append(GeometryComponent(name=f"roof_gutter_{side}", type="gutter", position_m=(0, roof_y + .25, side * (b_l / 2 + overhang)), dimensions_m=(b_w + 2 * overhang, .08, .08), material_color=palette.get("accent", "#64748b")))
+    if bool(params.get("drainage", 0)):
+        for side in (-1, 1):
+            components.append(GeometryComponent(name=f"downpipe_{side}", type="downpipe", position_m=(b_w / 2, floors * floor_h / 2, side * b_l / 2), dimensions_m=(.08, floors * floor_h, .08), material_color=palette.get("accent", "#64748b")))
 
     slab_count = len([c for c in components if c.type == "floor_slab"])
     validation_notes = [
@@ -1061,5 +1105,3 @@ def _generate_cable_stayed_bridge(span: float, width: float, support_h: float, t
         )
 
     return ParametricGeometry(type="bridge_cable_stayed", components=components)
-
-

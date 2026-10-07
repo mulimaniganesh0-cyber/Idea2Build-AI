@@ -1,6 +1,8 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
-import { API_BASE_URL, sendChatMessage } from "./api";
+import { API_BASE_URL, exportSTEP, getProjectSession, listProjects, rebuildValidate, sendChatMessage, exportHouseCADStep, exportHouseCADStl, exportHouseCADObj, generateHouseCAD, type HouseStateRequest } from "./api";
 import { ModelViewport } from "./ModelViewport";
+import { ModelInspector } from "./ModelInspector";
+import { HouseDesignStudio } from "./HouseDesignStudio";
 import { exportGeometryToOBJ } from "./utils/exportObj";
 import type {
   CadFileItem,
@@ -12,6 +14,7 @@ import type {
   Unit,
   UserPreferences,
   ViewMode,
+  ProjectPlan,
 } from "./types";
 
 const QUICK_SUGGESTIONS = [
@@ -50,8 +53,20 @@ export default function App() {
 
   // Project & CAD state
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [recentProjects, setRecentProjects] = useState<ProjectPlan[]>([]);
+  const [isLoadingProject, setIsLoadingProject] = useState(false);
   const [designSpec, setDesignSpec] = useState<DesignSpec | null>(null);
   const [geometry, setGeometry] = useState<ParametricGeometry | null>(null);
+  const [parametricJson, setParametricJson] = useState<Record<string, unknown> | null>(null);
+  const [knowledgeStatus, setKnowledgeStatus] = useState<string | null>(null);
+  const [knowledgeSources, setKnowledgeSources] = useState<Array<{ document_id?: number; chunk_id?: number; rank?: number; source: string; title?: string; page?: number | null; score?: number; content?: string }>>([]);
+  const [knowledgeTrace, setKnowledgeTrace] = useState<{ trace_id: string; embedding_model: string; embedding_dimension: number | null; requested_top_k: number; similarity_threshold: number; duration_ms?: number } | null>(null);
+  const [validationNotice, setValidationNotice] = useState<string | null>(null);
+  const [rebuildReport, setRebuildReport] = useState<{ status?: string; solid_count?: number; feature_count?: number; bounding_box_m?: { min?: { x?: number; y?: number; z?: number }; max?: { x?: number; y?: number; z?: number } } } | null>(null);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [houseCADData, setHouseCADData] = useState<Record<string, unknown> | null>(null);
+  const [kernelReport, setKernelReport] = useState<Record<string, unknown> | null>(null);
+  const [houseDesignState, setHouseDesignState] = useState<Record<string, any> | null>(null);
 
   // Chat & Input state
   const [input, setInput] = useState("");
@@ -78,6 +93,16 @@ export default function App() {
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    void refreshProjects();
+    const savedProjectId = sessionStorage.getItem("ai-cad-active-project-id");
+    if (savedProjectId) void loadProjectSession(savedProjectId);
+  }, []);
+
+  useEffect(() => {
+    if (projectId) sessionStorage.setItem("ai-cad-active-project-id", projectId);
+    else sessionStorage.removeItem("ai-cad-active-project-id");
+  }, [projectId]);
   // Listen to window.location.hash & popstate for browser Back/Forward navigation
   useEffect(() => {
     const syncRouteFromHash = () => {
@@ -121,6 +146,59 @@ export default function App() {
     }
   }, [messages, isProcessing, currentRoute]);
 
+  async function refreshProjects() {
+    try {
+      setRecentProjects(await listProjects());
+    } catch {
+      // The workspace remains usable if the project API is offline.
+    }
+  }
+
+  async function loadProjectSession(id: string) {
+    setIsLoadingProject(true);
+    try {
+      const session = await getProjectSession(id);
+      setProjectId(session.plan.project_id);
+      setDesignSpec(session.design_state);
+      setGeometry(session.geometry);
+      setParametricJson(session.parametric_json ?? null);
+      setHouseCADData(session.kernel_report ?? null);
+      setKernelReport(null);
+      setHouseDesignState(session.house_design_state ?? null);
+      setKnowledgeStatus((session.house_design_state?.knowledge_status as string | undefined) ?? null);
+      setKnowledgeSources((session.house_design_state?.knowledge_provenance as Array<{ source: string; title?: string; page?: number | null; score?: number; content?: string }> | undefined) ?? []);
+      setRebuildReport(null);
+      setMessages(session.messages.map((message, index) => ({
+        id: `saved_${index}`,
+        role: message.role,
+        text: message.text,
+        timestamp: new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      })));
+      setKnowledgeStatus(null);
+      setKnowledgeSources([]);
+      navigateTo("chat");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Could not load this project.");
+    } finally {
+      setIsLoadingProject(false);
+    }
+  }
+
+  function startNewProject() {
+    if (isProcessing || isLoadingProject) return;
+    setProjectId(null);
+    setDesignSpec(null);
+    setGeometry(null);
+    setParametricJson(null);
+    setRebuildReport(null);
+    setHouseCADData(null);
+    setMessages([]);
+    setKnowledgeStatus(null);
+    setKnowledgeSources([]);
+    setValidationNotice(null);
+    setErrorMessage(null);
+    navigateTo("chat");
+  }
   async function handleSend(promptText: string) {
     const text = promptText.trim();
     if (!text || isProcessing) return;
@@ -157,6 +235,32 @@ export default function App() {
         }
       }
       if (response.geometry) setGeometry(response.geometry);
+      if (response.design_state) setParametricJson(response.parametric_json ?? null);
+      setKnowledgeStatus(response.knowledge_status ?? response.house_design_state?.knowledge_status as string ?? null);
+      setKnowledgeSources(response.knowledge_sources ?? response.house_design_state?.knowledge_provenance as Array<{ source: string; title?: string; page?: number | null; score?: number; content?: string }> ?? []);
+      setKnowledgeTrace(response.knowledge_trace ?? response.house_design_state?.knowledge_trace as typeof knowledgeTrace ?? null);
+      setValidationNotice(null);
+      setRebuildReport(null);
+      setHouseCADData(response.kernel_report ?? null);
+      setKernelReport(response.design_state?.object_type === "house" ? null : response.kernel_report ?? null);
+      setHouseDesignState(response.house_design_state ?? null);
+
+      // Auto-fetch real OpenCASCADE CAD data for house designs
+      if (response.design_state?.object_type === "house" && response.design_state.feature_parameters && !response.kernel_report) {
+        const fp = response.design_state.feature_parameters;
+        const houseReq: HouseStateRequest = {
+          project_id: response.project_id,
+          site_width_m: typeof fp.site_width_m === "number" ? fp.site_width_m : null,
+          site_length_m: typeof fp.site_length_m === "number" ? fp.site_length_m : null,
+          floors: typeof fp.floors === "number" ? Math.round(fp.floors) : 2,
+          building_width_m: typeof fp.building_width_m === "number" ? fp.building_width_m : null,
+          building_length_m: typeof fp.building_length_m === "number" ? fp.building_length_m : null,
+          floor_height_m: typeof fp.floor_height_m === "number" ? fp.floor_height_m : 3.0,
+          material: "reinforced_concrete",
+          roof_type: typeof fp.roof_type === "string" ? fp.roof_type : "pitched",
+        };
+        generateHouseCAD(houseReq).then(setHouseCADData).catch(() => { /* non-blocking */ });
+      }
 
       const assistantMessage: ChatMessage = {
         id: `assistant_${Date.now()}`,
@@ -168,6 +272,7 @@ export default function App() {
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
+      void refreshProjects();
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : "Failed to connect to the CAD backend.";
       setErrorMessage(errMsg);
@@ -205,6 +310,58 @@ export default function App() {
       }
     }
     navigateTo("home");
+  }
+
+async function validateDesign() {
+    if (!parametricJson) return;
+    setValidationNotice("Rebuilding the parametric CAD source…");
+    try {
+      const result = await rebuildValidate(parametricJson);
+      setRebuildReport(result);
+      setValidationNotice(result.status === "rebuild_ok"
+        ? `Parametric rebuild completed · ${result.solid_count} exporter box primitives · ${result.feature_count} feature definitions`
+        : `Validation returned ${result.status || "an unknown status"}`);
+    } catch (error) {
+      setValidationNotice(error instanceof Error ? error.message : "CAD validation failed.");
+    }
+  }
+
+  async function exportStepFile() {
+    if (!parametricJson && !houseCADData) return;
+    try {
+      const isHouse = designSpec?.object_type === "house";
+      if (isHouse && designSpec?.feature_parameters) {
+        const fp = designSpec.feature_parameters;
+        const houseReq: HouseStateRequest = {
+          project_id: projectId ?? "unknown",
+          site_width_m: typeof fp.site_width_m === "number" ? fp.site_width_m : null,
+          site_length_m: typeof fp.site_length_m === "number" ? fp.site_length_m : null,
+          floors: typeof fp.floors === "number" ? Math.round(fp.floors) : 2,
+          building_width_m: typeof fp.building_width_m === "number" ? fp.building_width_m : null,
+          building_length_m: typeof fp.building_length_m === "number" ? fp.building_length_m : null,
+          floor_height_m: typeof fp.floor_height_m === "number" ? fp.floor_height_m : 3.0,
+          material: "reinforced_concrete",
+          roof_type: typeof fp.roof_type === "string" ? fp.roof_type : "pitched",
+        };
+        const blob = await exportHouseCADStep(houseReq);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `house-${Math.round(fp.floors as number) || 2}floors-${projectId?.slice(0, 8) || "export"}.step`;
+        link.click();
+        URL.revokeObjectURL(url);
+      } else if (parametricJson) {
+        const blob = await exportSTEP(parametricJson);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${designSpec?.object_type || "design"}-${projectId || "export"}.step`;
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (error) {
+      setValidationNotice(error instanceof Error ? error.message : "STEP export failed.");
+    }
   }
 
   function exportSpecJson() {
@@ -323,12 +480,17 @@ export default function App() {
 
         <div className="header-center">
           <span className="project-title">
-            {designSpec ? `${designSpec.object_type.toUpperCase()} DESIGN` : "NEW CAD PROJECT"}
+            {designSpec ? ((recentProjects.find((project) => project.project_id === projectId)?.summary ?? "").match(/^(Unspecified|Mechanical) request classified at complexity level/i) ? designSpec.object_type : (recentProjects.find((project) => project.project_id === projectId)?.summary || `${designSpec.object_type} design`)).toUpperCase() : "NEW CAD PROJECT"}
           </span>
-          <span className="save-status">● Autosaved ({projectId ? projectId.slice(0, 8) : "Session"})</span>
+          {designSpec && <div className="engineering-state-badges" aria-label="Engineering model status"><span>MODEL GENERATED</span><span>STRENGTH NOT ANALYZED</span></div>}
+          <span className="save-status">● Server project ({projectId ? projectId.slice(0, 8) : "Not saved yet"})</span>
         </div>
 
         <div className="header-right">
+          <button className="btn-tool" onClick={startNewProject} disabled={isProcessing || isLoadingProject}>New Project</button>
+          {validationNotice && <span className="save-status" role="status">{validationNotice}</span>}
+          <button className="btn-tool" onClick={() => void validateDesign()} disabled={!parametricJson} title="Reconstruct the parametric export primitives and report their bounds">Rebuild Check</button>
+          <button className="btn-tool" onClick={() => void exportStepFile()} disabled={!parametricJson} title="Export backend STEP geometry">Export STEP</button>
           <button className="theme-toggle" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}>
             {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
           </button>
@@ -345,17 +507,17 @@ export default function App() {
           <nav className="sidebar-nav">
             <button className={`nav-item ${currentRoute === "home" ? "active" : ""}`} onClick={() => navigateTo("home")}>
               <span className="nav-icon">🏠</span>
-              <span className="nav-label">Home</span>
+              <span className="nav-label">Projects</span>
             </button>
 
             <button className={`nav-item ${currentRoute === "chat" ? "active" : ""}`} onClick={() => navigateTo("chat")}>
               <span className="nav-icon">💬</span>
-              <span className="nav-label">Chat & Design</span>
+              <span className="nav-label">Design Studio</span>
             </button>
 
             <button className={`nav-item ${currentRoute === "files" ? "active" : ""}`} onClick={() => navigateTo("files")}>
               <span className="nav-icon">📁</span>
-              <span className="nav-label">Files & CAD</span>
+              <span className="nav-label">Files & Exports</span>
             </button>
 
             <button className={`nav-item ${currentRoute === "viewer" ? "active" : ""}`} onClick={() => navigateTo("viewer")}>
@@ -365,7 +527,7 @@ export default function App() {
 
             <button className={`nav-item ${currentRoute === "dataset" ? "active" : ""}`} onClick={() => navigateTo("dataset")}>
               <span className="nav-icon">📊</span>
-              <span className="nav-label">Dataset</span>
+              <span className="nav-label">Learning Center</span>
             </button>
 
             <button className={`nav-item ${currentRoute === "settings" ? "active" : ""}`} onClick={() => navigateTo("settings")}>
@@ -406,7 +568,19 @@ export default function App() {
                   </div>
                 </form>
 
-                <div className="quick-suggestions-section">
+                {recentProjects.length > 0 && (
+                  <section className="recent-projects-section" aria-label="My Projects">
+                    <h3>My Projects</h3>
+                    <div className="recent-projects-grid">
+                      {recentProjects.map((project) => (
+                        <button key={project.project_id} className="recent-project-card" onClick={() => void loadProjectSession(project.project_id)}>
+                          <strong>{project.summary || project.source_prompt}</strong>
+                          <span>{project.domain} · revision {project.version}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}                <div className="quick-suggestions-section">
                   <h3>Or pick a template:</h3>
                   <div className="template-grid">
                     {QUICK_SUGGESTIONS.map((item) => (
@@ -424,12 +598,12 @@ export default function App() {
 
           {/* CHAT & DESIGN ROUTE (Integrated 4-Column Layout) */}
           {currentRoute === "chat" && (
-            <div className="route-page chat-design-page">
+            <div className={`route-page chat-design-page ${inspectorCollapsed ? "inspector-collapsed" : ""}`}>
               {/* Column 1: Chat Panel */}
               <section className="chat-section">
                 <div className="chat-header">
-                  <h2>Conversational CAD Assistant</h2>
-                  <p>Describe your design intent or prompt to generate 3D models.</p>
+                  <h2>AI Engineer</h2>
+                  <p>Describe what you want to build, refine, or understand.</p>
                 </div>
 
                 <div className="messages-scroll">
@@ -640,138 +814,45 @@ export default function App() {
                     isLoading={isProcessing}
                     error={errorMessage}
                   />
+                  {designSpec && <div className="viewport-model-hud" aria-label="Model information">
+                    <strong>{designSpec.object_type.replaceAll("_", " ").toUpperCase()}</strong>
+                    <span>{designSpec.dimensions.length} × {designSpec.dimensions.width} × {designSpec.dimensions.height} {designSpec.unit}</span>
+                    <span>{geometry?.components.length ?? 0} backend components · {designSpec.material || "Material not specified"}</span>
+                    <span>Strength analysis · Not analyzed</span>
+                  </div>}
                 </div>
               </section>
 
-              {/* Column 3: Dedicated Right-Side Design Details Panel (Section 9) */}
-              <aside className="right-spec-panel">
-                <div className="panel-header">
-                  <h3>Design Specification</h3>
-                  <span className="badge-concept">PRELIMINARY CONCEPT</span>
-                </div>
-
-                {designSpec ? (
-                  <div className="spec-content">
-                    <div className="spec-card-group">
-                      <div className="spec-row">
-                        <span className="lbl">OBJECT TYPE</span>
-                        <span className="val highlight">{designSpec.object_type.toUpperCase()}</span>
-                      </div>
-                      {designSpec.feature_parameters.bridge_type && (
-                        <div className="spec-row">
-                          <span className="lbl">BRIDGE TYPE</span>
-                          <span className="val highlight" style={{ color: "#38bdf8" }}>
-                            {String(designSpec.feature_parameters.bridge_type).toUpperCase().replace("_", " ")}
-                          </span>
-                        </div>
-                      )}
-                      {designSpec.object_type === "house" && (
-                        <>
-                          <div className="spec-row">
-                            <span className="lbl">TOTAL FLOORS</span>
-                            <span className="val highlight" style={{ color: "#38bdf8" }}>
-                              {designSpec.feature_parameters.floors || designSpec.feature_parameters.floor_count || 2} Physical Levels
-                            </span>
-                          </div>
-                          <div className="spec-row">
-                            <span className="lbl">FLOOR CONFIG</span>
-                            <span className="val highlight" style={{ color: "#10b981" }}>
-                              {designSpec.feature_parameters.floor_label || `G+${Number(designSpec.feature_parameters.floors || 2) - 1}`}
-                            </span>
-                          </div>
-                          <div className="spec-row">
-                            <span className="lbl">FLOOR HEIGHT</span>
-                            <span className="val">{designSpec.feature_parameters.floor_height_m || 3.0} m / level</span>
-                          </div>
-                          <div className="spec-row">
-                            <span className="lbl">TOTAL HEIGHT</span>
-                            <span className="val">
-                              {designSpec.feature_parameters.total_building_height_m
-                                ? `${Number(designSpec.feature_parameters.total_building_height_m).toFixed(1)} m`
-                                : `${(designSpec.dimensions_mm.height / 1000).toFixed(1)} m`}
-                            </span>
-                          </div>
-                        </>
-                      )}
-                      <div className="spec-row">
-                        <span className="lbl">OVERALL SIZE</span>
-                        <span className="val">
-                          {(designSpec.dimensions_mm.length / 1000).toFixed(1)}m ×{" "}
-                          {(designSpec.dimensions_mm.width / 1000).toFixed(1)}m ×{" "}
-                          {(designSpec.dimensions_mm.height / 1000).toFixed(1)}m
-                        </span>
-                      </div>
-                      <div className="spec-row">
-                        <span className="lbl">NORMALIZED (MM)</span>
-                        <span className="val">{designSpec.dimensions_mm.length} × {designSpec.dimensions_mm.width} × {designSpec.dimensions_mm.height} mm</span>
-                      </div>
-                      <div className="spec-row">
-                        <span className="lbl">MATERIAL</span>
-                        <span className="val">{designSpec.material ?? "Structural Steel / Concrete"}</span>
-                      </div>
-                    </div>
-
-                    <div className="spec-block">
-                      <h4>Parametric Parameters</h4>
-                      <div className="chips-wrapper">
-                        {Object.entries(designSpec.feature_parameters).map(([k, v]) => (
-                          <div key={k} className="chip-item">
-                            <span className="c-key">{k}:</span>
-                            <span className="c-val">{typeof v === "number" ? v.toFixed(2) : String(v)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {geometry && geometry.components && geometry.components.length > 0 && (
-                      <div className="spec-block">
-                        <h4>Generated Components ({geometry.components.length})</h4>
-                        <div className="chips-wrapper">
-                          {Array.from(new Set(geometry.components.map((c) => c.type))).map((compType) => (
-                            <div key={compType} className="chip-item">
-                              <span className="c-key">{compType}:</span>
-                              <span className="c-val">{geometry.components.filter((c) => c.type === compType).length}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="spec-block warning-block" style={{ backgroundColor: "rgba(245, 158, 11, 0.1)", padding: "10px", borderRadius: "6px", borderLeft: "3px solid #f59e0b", marginTop: "12px" }}>
-                      <h4 style={{ color: "#f59e0b", margin: "0 0 4px 0", fontSize: "0.85rem" }}>⚠️ Engineering Status</h4>
-                      <p style={{ margin: 0, fontSize: "0.8rem", color: "#cbd5e1" }}>
-                        <strong>Preliminary Concept — Not Structurally Validated</strong>. Qualified professional review required before engineering or construction release.
-                      </p>
-                    </div>
-
-                    <div className="spec-block">
-                      <h4>Assumptions & Warnings</h4>
-                      <ul className="assumptions-list">
-                        {designSpec.warnings.map((w, idx) => (
-                          <li key={idx}>{w}</li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <div className="panel-actions">
-                      <button className="btn-spec-action" onClick={() => navigateTo("viewer")}>
-                        👁️ Fullscreen 3D
-                      </button>
-                      <button className="btn-spec-action" onClick={exportObjFile}>
-                        💾 Download 3D (.OBJ)
-                      </button>
-                      <button className="btn-spec-action" onClick={exportSpecJson}>
-                        📄 Export JSON
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="spec-empty">
-                    <span className="icon">📋</span>
-                    <p>No model generated yet. Enter a request in the chat to see detailed parametric specifications.</p>
-                  </div>
-                )}
-              </aside>
+              <ModelInspector
+                designSpec={designSpec}
+                geometry={geometry}
+                parametricJson={parametricJson}
+                projectName={recentProjects.find((project) => project.project_id === projectId)?.summary ?? null}
+                projectId={projectId}
+                knowledgeStatus={knowledgeStatus}
+                knowledgeSources={knowledgeSources}
+                knowledgeTrace={knowledgeTrace}
+                rebuildReport={rebuildReport}
+                validationNotice={validationNotice}
+                collapsed={inspectorCollapsed}
+                onToggleCollapsed={() => setInspectorCollapsed((value) => !value)}
+                houseCADData={houseCADData}
+                kernelReport={kernelReport}
+                houseDesignState={houseDesignState}
+              />
+              {designSpec?.object_type === "house" && <HouseDesignStudio projectId={projectId} onProjectId={(id) => setProjectId(id)} onGenerated={(data) => {
+                setProjectId(data.project_id);
+                setDesignSpec(data.design_state);
+                setGeometry(data.geometry);
+                setHouseCADData(data.kernel_report);
+                setHouseDesignState(data.house_design_state);
+                setParametricJson(data.parametric_json ?? null);
+                setKnowledgeStatus(data.knowledge?.status ?? "NOT_REQUIRED");
+                setKnowledgeSources(data.knowledge?.sources ?? []);
+                setKnowledgeTrace(data.knowledge?.trace ?? null);
+                setKernelReport(null);
+                void refreshProjects();
+              }} />}
             </div>
           )}
 
@@ -954,6 +1035,12 @@ export default function App() {
                     isLoading={isProcessing}
                     error={errorMessage}
                   />
+                  {designSpec && <div className="viewport-model-hud" aria-label="Model information">
+                    <strong>{designSpec.object_type.replaceAll("_", " ").toUpperCase()}</strong>
+                    <span>{designSpec.dimensions.length} × {designSpec.dimensions.width} × {designSpec.dimensions.height} {designSpec.unit}</span>
+                    <span>{geometry?.components.length ?? 0} backend components · {designSpec.material || "Material not specified"}</span>
+                    <span>Strength analysis · Not analyzed</span>
+                  </div>}
 
                   {/* HUD Overlay in Fullscreen */}
                   <div className="fullscreen-hud">

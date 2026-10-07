@@ -287,10 +287,30 @@ def update_house(state: HouseProjectState, message: str) -> HouseProjectState:
         state.custom_furniture.append(furniture)
         state.view_mode = "interior"
 
-    if "pitched" in message.lower() or "slope" in message.lower():
-        state.roof_type = "pitched"
+    lower = message.lower()
+    roof = next((kind for kind in ("gable", "hip", "single_slope", "pitched", "flat") if re.search(rf"\b{kind.replace('_', '[ -]?')}\b", lower)), None)
+    if roof:
+        state.roof_type = roof
     elif "flat" in message.lower() or "terrace" in message.lower():
         state.roof_type = "flat"
+
+    bedrooms = re.search(r"\b(\d+)\s+bedrooms?\b", lower)
+    bathrooms = re.search(r"\b(\d+)\s+bathrooms?\b", lower)
+    if bedrooms: state.bedrooms = int(bedrooms.group(1))
+    if bathrooms: state.bathrooms = int(bathrooms.group(1))
+    if "pooja" in lower: state.pooja_room = True
+    if "study" in lower: state.study_room = True
+    if "utility" in lower: state.utility = True
+    if "balcony" in lower: state.balcony = not bool(re.search(r"\bno\s+balcony\b", lower))
+    if "terrace" in lower: state.terrace = not bool(re.search(r"\bno\s+terrace\b", lower))
+    for style in ("modern", "traditional", "luxury", "minimal", "tropical", "contemporary"):
+        if style in lower: state.style = style
+    for style in ("modern luxury", "modern minimal", "indian contemporary", "premium", "budget efficient"):
+        if style in lower: state.interior_style = style.replace(" ", "_")
+    for palette in ("modern vibrant", "warm luxury", "contemporary", "tropical"):
+        if palette in lower: state.color_palette = palette.replace(" ", "_")
+    location = re.search(r"\bin\s+([A-Z][\w -]{1,40}?)(?:[,.]|\s+with\b|$)", message)
+    if location: state.location = location.group(1).strip()
 
     return state
 
@@ -316,7 +336,7 @@ def create_house_concept_model(state: HouseProjectState) -> DesignSpec:
     state.assumptions = []
     if state.site_width_m is None or state.site_length_m is None:
         state.assumptions.append("Default 30 × 40 ft site dimensions assumed.")
-    state.assumptions.append(f"Building setback applied: footprint {b_width_m / _FT_TO_M:.1f} × {b_length_m / _FT_TO_M:.1f} ft.")
+    state.assumptions.append(f"Concept footprint planning allowance: {b_width_m / _FT_TO_M:.1f} × {b_length_m / _FT_TO_M:.1f} ft; local setbacks are NOT_SPECIFIED.")
     state.assumptions.append(f"Standard floor height of {floor_height_m:g} m per level ({floors} total levels, {floor_label}).")
     state.status = "concept_generated"
 
@@ -352,7 +372,22 @@ def create_house_concept_model(state: HouseProjectState) -> DesignSpec:
             "view_mode": state.view_mode,
             "active_floor": float(state.active_floor) if state.active_floor is not None else -1.0,
             "has_interior": 1.0,
-            "custom_furniture_count": float(len(state.custom_furniture)),
+        "custom_furniture_count": float(len(state.custom_furniture)),
+        "bedrooms": float(state.bedrooms),
+        "bathrooms": float(state.bathrooms),
+        "parking": float(state.parking),
+        "balcony": float(state.balcony),
+        "terrace": float(state.terrace),
+        "style": state.style,
+        "interior_style": state.interior_style,
+        "color_palette": state.color_palette,
+        "roof_slope_deg": state.roof_slope_deg,
+        "roof_overhang_mm": state.roof_overhang_mm,
+        "location": state.location or "NOT_SPECIFIED",
+        "pooja_room": float(state.pooja_room),
+        "study_room": float(state.study_room),
+        "utility": float(state.utility),
+        "budget_category": state.budget_category or "NOT_SPECIFIED",
             "is_house": 1.0,
         },
         source_prompt=f"House on {w_m / _FT_TO_M:.0f}×{l_m / _FT_TO_M:.0f} ft plot with {floors} floors ({floor_label}), view mode: {state.view_mode}",
